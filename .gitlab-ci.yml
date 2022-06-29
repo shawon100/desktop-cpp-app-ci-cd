@@ -1,0 +1,99 @@
+# This file is a template, and might need editing before it works on your project.
+# To contribute improvements to CI/CD templates, please follow the Development guide at:
+# https://docs.gitlab.com/ee/development/cicd/templates.html
+# This specific template is located at:
+# https://gitlab.com/gitlab-org/gitlab/-/blob/master/lib/gitlab/ci/templates/dotNET.gitlab-ci.yml
+
+# The following script will work for any project that can be built from command line by msbuild
+# It uses powershell shell executor, so you need to add the following line to your config.toml file
+# (located in gitlab-runner.exe directory):
+#   shell = "powershell"
+#
+# The script is composed of 3 stages: build, test and deploy.
+#
+# The build stage restores NuGet packages and uses msbuild to build the exe and msi
+# One major issue you'll find is that you can't build msi projects from command line
+# if you use vdproj.  There are workarounds building msi via devenv, but they rarely work
+# The best solution is migrating your vdproj projects to WiX, as it can be build directly
+# by msbuild..
+#
+# The test stage runs nunit from command line against Test project inside your solution
+# It also saves the resulting TestResult.xml file
+#
+# The deploy stage copies the exe and msi from build stage to a network drive
+# You need to have the network drive mapped as Local System user for gitlab-runner service to see it
+# The best way to persist the mapping is via a scheduled task
+# running the following batch command: net use P: \\x.x.x.x\Projects /u:your_user your_pass /persistent:yes
+# place project specific paths in variables to make the rest of the script more generic
+
+stages:
+  - build
+  # - test
+  - deploy
+
+variables:
+  EXE_RELEASE_FOLDER: 'C:\MyAPP\bin\Release'
+  EXE_PATH: 'C:\Users\shawonashadullah\builds\DSqzRJoK\0\devops-test1\desktop-cpp-app-cicd\x64'
+  MSI_RELEASE_FOLDER: 'C:\Setup\bin\Release'
+  # TEST_FOLDER: 'C:\MyAPP\bin\Release'
+  DEPLOY_FOLDER: 'C:\CPPProjects\MyAPP\Builds'
+  NUGET_PATH: 'C:\NuGet\nuget.exe'
+  MSBUILD_PATH: 'C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\MSBuild\Current\Bin\msbuild.exe'
+  NUNIT_PATH: 'C:\Program Files (x86)\NUnit.org\nunit-console\nunit3-console.exe'
+
+
+build:
+  stage: build
+  only:
+    - main
+    - dev
+  tags:
+  - runner
+  script:
+    # - '& "$env:NUGET_PATH" restore'  # restore Nuget dependencies
+    - '& "$env:MSBUILD_PATH" /p:Configuration=Release'  # build the project
+  artifacts:
+    expire_in: 1 week  # save gitlab server space, we copy the files we need to deploy folder later on
+    paths:
+      - '$env:EXE_PATH\Release'  # saving exe to copy to deploy folder
+      # - '$env:MSI_RELEASE_FOLDER\MyAPP Setup.msi'  # saving msi to copy to deploy folder
+      # - '$env:TEST_FOLDER\'  # saving entire Test project so NUnit can run tests
+
+
+# test:
+#   stage: test
+#   tags:
+#   - runner
+#   script:
+#     - '& "$env:NUNIT_PATH" "$TEST_FOLDER\MyCalculator.Tests.dll"'  # running NUnit tests
+#   artifacts:
+#     when: always  # save test results even when the task fails
+#     expire_in: 1 week  # save gitlab server space, we copy the files we need to deploy folder later on
+#     paths:
+#       - '.\TestResult.xml'  # saving NUnit results to copy to deploy folder
+#   dependencies:
+#     - build
+deploy:
+  stage: deploy
+  only:
+    - main
+    - dev
+  tags:
+  - runner
+  script:
+    # Compose a folder for each release based on commit tag.
+    # Assuming your tag is Rev1.0.0.1, and your last commit message is 'First commit'
+    # the artifact files will be copied to:
+    # P:\Projects\MyAPP\Builds\Rev1.0.0.1 - First commit\
+    - '$commitSubject = git log -1 --pretty=%s'
+    # - '$deployFolder = $($env:DEPLOY_FOLDER) + "\" + $($env:CI_BUILD_TAG) + " - " + $commitSubject + "\"'
+
+    # xcopy takes care of recursively creating required folders
+    - 'cd $EXE_PATH'
+    - 'ls'
+    - 'Copy-Item -Force "Release" -Destination "$DEPLOY_FOLDER" -Recurse'
+    # - 'xcopy /y ".\$env:MSI_RELEASE_FOLDER\MyCalculator Setup.msi" "$deployFolder"'
+    # - 'xcopy /y ".\TestResult.xml" "$deployFolder"'
+  dependencies:
+    - build
+    # - test
